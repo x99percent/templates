@@ -1,0 +1,23 @@
+[
+  {
+    "type": 3,
+    "title": "HomePC",
+    "description": "HomePC setup with Home Assistant",
+    "repository": {
+      "url": "http://172.18.0.1:8080",
+      "stackfile": "docker-compose.yaml"
+    }
+  },
+  {
+    "type": 2,
+    "title": "CockroachDB",
+    "description": "CockroachDB cluster",
+    "note": "Deploys an insecure CockroachDB cluster, please refer to <a href=\"https://www.cockroachlabs.com/docs/stable/orchestrate-cockroachdb-with-docker-swarm.html\" target=\"_blank\">CockroachDB documentation</a> for production deployments.",
+    "categories": ["database"],
+    "logo": "https://cloudinovasi.id/assets/img/logos/cockroachdb.png",
+    "repository": {
+      "url": "https://github.com/portainer/templates",
+      "stackfile": "stacks/cockroachdb/docker-stack.yml"
+    }
+  }
+]

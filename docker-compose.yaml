@@ -1,0 +1,235 @@
+version: '3.7'
+services:
+  grafana:
+    container_name: grafana
+    image: grafana/grafana
+    user: "1000:1000"
+    networks:
+      - main
+    ports:
+      - 3000:3000
+    volumes:
+      - /opt/grafana:/etc/grafana:rw
+      - /opt/grafana:/var/lib/grafana:rw
+      - /etc/localtime:/etc/localtime:ro
+      - /opt/wait-for-it:/opt/wait-for-it:ro
+    entrypoint:
+      - /opt/wait-for-it/wait-for-influxdb.sh
+      - /run.sh
+    restart: "no"
+    depends_on:
+      - influxdb
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:3000 || exit 1"]
+      interval: 1m
+      timeout: 1s
+      retries: 5
+
+  influxdb:
+    container_name: influxdb
+    image: influxdb
+    networks:
+      - main
+    ports:
+      - 8086:8086
+    volumes:
+      - /opt/influxdb/influxdb.conf:/etc/influxdb/influxdb.conf:rw
+      - /opt/influxdb/data:/var/lib/influxdb
+    restart: "no"
+    healthcheck:
+      test: ["CMD", "curl", "-sI", "http://127.0.0.1:8086/ping"]
+      interval: 1m
+      timeout: 1s
+      retries: 5
+      start_period: 10s
+
+  mariadb:
+    container_name: mariadb
+    image: mariadb
+    networks:
+      main:
+        ipv4_address: 172.18.0.201
+    ports:
+      - 3306:3306
+    volumes:
+      - /opt/mariadb:/etc/mysql
+      - /opt/mariadb/data:/var/lib/mysql
+#    environment:
+#       - MYSQL_ROOT_PASSWORD=mariadb
+    healthcheck:
+      test: ["CMD", "mysqladmin", "-u", "ping", "ping", "--silent"]
+      interval: 1m
+      timeout: 1s
+      retries: 5
+      start_period: 10s
+
+  hassio:
+    container_name: hassio
+    image: homeassistant/amd64-hassio-supervisor:170
+    restart: "no"
+    privileged: true
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/dbus:/var/run/dbus
+      - /opt/hassio:/data
+      - /opt/wait-for-it:/opt/wait-for-it:ro
+    environment:
+      - SUPERVISOR_SHARE=/opt/hassio
+      - SUPERVISOR_NAME=hassio
+      - HOMEASSISTANT_REPOSITORY=homeassistant/qemux86-64-homeassistant
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    dns:
+      - 192.168.1.1
+    entrypoint:
+      - /opt/wait-for-it/hassio-wait.sh
+      - python3
+      - -m
+      - hassio
+    depends_on:
+      - mariadb
+      - influxdb
+      - mosquitto
+      - nginx
+    healthcheck:
+      test: ["CMD", "curl", "-sI", "http://172.30.32.1:8123"]
+      interval: 15s
+      timeout: 1s
+      retries: 3
+      start_period: 3m
+
+  node-red:
+    container_name: node-red
+    image: nodered/node-red-docker:v8
+    user: "1000:1000"
+    networks:
+      - main
+    ports:
+      - 1880:1880
+    volumes:
+      - /opt/node-red:/data
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /opt/wait-for-it:/opt/wait-for-it:ro
+    restart: "no"
+    entrypoint:
+      - /opt/wait-for-it/node-red-wait.sh
+      - npm
+      - start
+      - --
+      - --userDir
+      - /data
+    depends_on:
+      - mosquitto
+      - hassio
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:1880"]
+      interval: 1m
+      timeout: 1s
+      retries: 6
+      start_period: 5s
+    dns:
+      - 192.168.1.1
+    environment:
+      - TZ=America/New_York
+
+  mosquitto:
+    container_name: mosquitto
+    image: eclipse-mosquitto
+    user: "1000:1000"
+    networks:
+      - main
+    ports:
+      - 1883:1883
+      - 9001:9001
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /opt/mosquitto:/mosquitto/config:ro
+      - /opt/mosquitto:/mosquitto/data
+      - /opt/mosquitto/log:/mosquitto/log
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -vz 127.0.0.1 9001 || exit 1"]
+      interval: 1m
+      timeout: 1s
+      retries: 3
+      start_period: 5s
+
+  fail2ban:
+    container_name: fail2ban
+    image: crazymax/fail2ban
+    network_mode: "host"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - /opt/fail2ban:/data
+      - /opt/nginx/logs:/var/log:ro
+      - /etc/timezone:/etc/timezone.host:ro
+    restart: "no"
+
+  telegraf:
+    container_name: telegraf
+    image: telegraf
+    network_mode: "host"
+    privileged: true
+    volumes:
+      - /opt/telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/wait-for-it:/opt/wait-for-it:ro
+    entrypoint:
+      - /opt/wait-for-it/wait-for-influxdb.sh
+      - /entrypoint.sh
+      - telegraf
+    restart: "no"
+    depends_on:
+      - influxdb
+
+  dockermon:
+    container_name: dockermon
+    image: philhawthorne/ha-dockermon
+    networks:
+      - main
+    ports:
+      - 8126:8126
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: "unless-stopped"
+    healthcheck:
+      test: "curl -sI http://localhost:8126/container/dockermon"
+      interval: 1m
+      timeout: 1s
+      retries: 3
+      start_period: 5s
+
+  zigbee2mqtt:
+    container_name: zigbee2mqtt
+#    image: koenkk/zigbee2mqtt:latest-dev
+    image: koenkk/zigbee2mqtt
+    restart: "no"
+    networks:
+      - main
+    volumes:
+#      - /opt/zigbee2mqtt/run.sh:/app/run.sh
+      - /opt/zigbee2mqtt:/app/data
+      - /opt/zigbee2mqtt/homeassistant.js:/app/lib/extension/homeassistant.js
+      - /opt/zigbee2mqtt/zigbee-shepherd-converters:/app/node_modules/zigbee-shepherd-converters
+#      - /opt/zigbee2mqtt/zigbee-herdsman:/app/node_modules/zigbee-herdsman
+      - /etc/localtime:/etc/localtime:ro
+      - /opt/wait-for-it:/opt/wait-for-it:ro
+    command:
+      - /opt/wait-for-it/wait-for-mosquitto.sh
+      - ./run.sh
+    devices:
+      - /dev/serial/by-id/usb-Texas_Instruments_TI_CC2531_USB_CDC___0X00124B00193667C9-if00:/dev/ttyACM0:rwm
+    depends_on:
+      - mosquitto
+
+networks:
+  main:
+    name: main
+    ipam:
+      config:
+        - subnet: 172.18.0.0/24
